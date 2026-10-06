@@ -355,6 +355,24 @@ void Runtime::ReleasePad() {
     ++pad.sequence;
 }
 
+void Runtime::ResetPadMotion() {
+    std::scoped_lock lock{mutex};
+    const u64 sequence = pad.sequence + 1;
+    pad = {};
+    pad.sequence = sequence;
+    pad_position_tracked = false;
+    pad_attitude = {};
+    pad_attitude_valid = false;
+    pad_acceleration = {};
+    pad_acceleration_valid = false;
+    pad_motion_time = {};
+    pad_yaw_reference_valid = false;
+    pad_seen = false;
+    pad_seen_offset_valid = false;
+    pad_anchor_valid = false;
+    pad_shown_valid = false;
+}
+
 void Runtime::UpdatePadOrientation(const Quat& orientation, const Vec3& angular_velocity) {
     std::scoped_lock lock{mutex};
     pad.pose.orientation = orientation;

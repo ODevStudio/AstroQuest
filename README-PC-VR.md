@@ -558,6 +558,19 @@ clang-cl /std:c++latest /EHsc /Ishadps4-arm64-main/src tools/tests/controller_su
 ./build/controller_support_test.exe
 ```
 
+After building `build/win-x64`, run the controller handover checks from the same developer
+shell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/tests/controller-handover-test.ps1
+```
+
+These use SDL virtual gamepads with physical device drivers disabled. They cover remote
+input, Sense-half exclusion in VR, DualSense/Edge promotion, late remote cleanup, complete
+touch/motion/queue reset, unused-device events, held keyboard input and fallback. Separate
+runs check that flat-mode selection and scripted-input priority remain intact. Actual
+Windows Sense enumeration, headset tracking and haptics still need hardware validation.
+
 Virtual Desktop's runtime has no headset to offer unless one is connected, so the OpenXR path
 is tested against the **Meta XR Simulator** (installed on this PC), which is a full OpenXR
 runtime with a simulated Quest 3 and its controllers. `XR_RUNTIME_JSON` makes one process use

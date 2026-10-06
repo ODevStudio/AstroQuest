@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gamepad.h>
 #include "SDL3/SDL_joystick.h"
 #include "common/assert.h"
@@ -15,6 +16,10 @@
 #include "core/libraries/system/userservice.h"
 
 struct SDL_Gamepad;
+
+namespace Core::Vr {
+struct DeviceState;
+}
 
 namespace Input {
 
@@ -91,15 +96,17 @@ public:
     virtual ~GameController() = default;
     void ConnectController(SDL_Gamepad* pad);
     void DisconnectController();
+    bool HasPhysicalController() const;
 
     void ReadState(State* state, bool* isConnected, int* connectedCount);
     int ReadStates(State* states, int states_num, bool* isConnected, int* connectedCount);
 
     void Button(Libraries::Pad::OrbisPadButtonDataOffset button, bool isPressed);
     void Axis(Input::Axis axis, int value, bool smooth = true);
-    void ApplyRemoteState(Libraries::Pad::OrbisPadButtonDataOffset buttons,
+    bool ApplyRemoteState(Libraries::Pad::OrbisPadButtonDataOffset buttons,
                           const std::array<int, 6>& axes, bool touch_down, float touch_x,
                           float touch_y);
+    void ApplyRemotePose(const Core::Vr::DeviceState* state);
     void Gyro(int id);
     void Acceleration(int id);
     void UpdateGyro(const float gyro[3]);
@@ -126,14 +133,15 @@ public:
     std::chrono::steady_clock::time_point GetLastUpdate();
     void SetLastUpdate(std::chrono::steady_clock::time_point lastUpdate);
 
-    float gyro_poll_rate;
-    float accel_poll_rate;
+    float gyro_poll_rate{};
+    float accel_poll_rate{};
     float gyro_buf[3] = {0.0f, 0.0f, 0.0f}, accel_buf[3] = {0.0f, 9.81f, 0.0f};
     s32 user_id = Libraries::UserService::ORBIS_USER_SERVICE_USER_ID_INVALID;
     SDL_Gamepad* m_sdl_gamepad = nullptr;
     u64 last_touch_down_timestamp = 0;
 
 private:
+    void ResetForDeviceHandover();
     void PushState();
     void ApplyTouch(int touchIndex, bool touchDown, float x, float y);
     /// Lets the right stick stand in for a finger on the touchpad (see controller.cpp).
@@ -156,7 +164,7 @@ private:
 
     State m_state;
 
-    std::mutex m_states_queue_mutex;
+    mutable std::mutex m_states_queue_mutex;
     RingBufferQueue<State> m_states_queue;
 };
 
@@ -175,6 +183,7 @@ public:
         return controllers[i];
     }
     void TryOpenSDLControllers();
+    void ProcessSDLGamepadEvent(const SDL_Event& event);
     u8 GetGamepadIndexFromJoystickId(SDL_JoystickID id);
     static std::optional<u8> GetControllerIndexFromUserID(s32 user_id);
     static std::optional<u8> GetControllerIndexFromControllerID(s32 controller_id);

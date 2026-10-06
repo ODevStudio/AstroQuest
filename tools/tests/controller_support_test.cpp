@@ -8,6 +8,7 @@
 using Core::Vr::IsPsvr2Headset;
 using Core::Vr::OpenXrControllerProfiles;
 using Input::GamepadPriority;
+using Input::IsPsvr2SenseGamepad;
 
 bool Equal(const char* actual, std::string_view expected) {
     if (actual == expected) {
@@ -21,6 +22,10 @@ bool Equal(const char* actual, std::string_view expected) {
 int main() {
     constexpr auto standard = OpenXrControllerProfiles(false);
     constexpr auto psvr2 = OpenXrControllerProfiles(true);
+    static_assert(IsPsvr2SenseGamepad(0x054c, 0x0e45));
+    static_assert(IsPsvr2SenseGamepad(0x054c, 0x0e46));
+    static_assert(!IsPsvr2SenseGamepad(0x054c, 0x0ce6));
+    static_assert(!IsPsvr2SenseGamepad(0x045e, 0x0e45));
     static_assert(standard.size() == 2 && psvr2.size() == 2);
     const auto& touch = standard[0];
     const auto& index = standard[1];

@@ -457,73 +457,7 @@ void WindowSDL::OnKeyboardMouseInput(const SDL_Event* event) {
 }
 
 void WindowSDL::OnGamepadEvent(const SDL_Event* event) {
-    const u8 gamepad = controllers.GetGamepadIndexFromJoystickId(event->gbutton.which);
-    if (gamepad >= 4) {
-        return;
-    }
-    bool input_down = event->type == SDL_EVENT_GAMEPAD_AXIS_MOTION ||
-                      event->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
-    Input::InputEvent input_event = Input::InputBinding::GetInputEventFromSDLEvent(*event);
-
-    // The PS button is nothing a title ever sees. In a headset it resets the view.
-    if (gamepad == 0 &&
-        (event->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || event->type == SDL_EVENT_GAMEPAD_BUTTON_UP) &&
-        event->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) {
-        Core::Vr::Runtime::Instance().NotePadButton(Core::Vr::Runtime::PadButton::Home,
-                                                    event->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
-    }
-
-    // the touchpad button shouldn't be rebound to anything else,
-    // as it would break the entire touchpad handling
-    // You can still bind other things to it though
-    if (event->gbutton.button == SDL_GAMEPAD_BUTTON_TOUCHPAD) {
-        controllers[gamepad]->Button(OrbisPadButtonDataOffset::TouchPad, input_down);
-        return;
-    }
-
-    switch (event->type) {
-    case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
-        switch ((SDL_SensorType)event->gsensor.sensor) {
-        case SDL_SENSOR_GYRO:
-            if (gamepad < 5) {
-                controllers[gamepad]->UpdateGyro(event->gsensor.data);
-            }
-            if (gamepad == 0) {
-                const float* gyro = event->gsensor.data;
-                Core::Vr::Runtime::Instance().UpdatePadGyro({gyro[0], gyro[1], gyro[2]});
-            }
-            break;
-        case SDL_SENSOR_ACCEL:
-            if (gamepad < 5) {
-                controllers[gamepad]->UpdateAcceleration(event->gsensor.data);
-            }
-            if (gamepad == 0) {
-                const float* accel = event->gsensor.data;
-                Core::Vr::Runtime::Instance().UpdatePadAcceleration({accel[0], accel[1], accel[2]});
-            }
-            break;
-        default:
-            break;
-        }
-        return;
-    case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN:
-    case SDL_EVENT_GAMEPAD_TOUCHPAD_UP:
-    case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION:
-        controllers[gamepad]->SetTouchpadState(event->gtouchpad.finger,
-                                              event->type != SDL_EVENT_GAMEPAD_TOUCHPAD_UP,
-                                              event->gtouchpad.x, event->gtouchpad.y);
-        return;
-    default:
-        break;
-    }
-
-    // add/remove it from the list
-    bool inputs_changed = Input::UpdatePressedKeys(input_event);
-
-    if (inputs_changed) {
-        // update bindings
-        Input::ActivateOutputsFromInputs();
-    }
+    controllers.ProcessSDLGamepadEvent(*event);
 }
 
 #ifndef __APPLE__

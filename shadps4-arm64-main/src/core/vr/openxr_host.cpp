@@ -912,9 +912,10 @@ struct OpenXrHost::Impl {
         sent_buttons = {};
         sent_axes = {128, 128, 128, 128, 0, 0};
         sent_touch = false;
-        (*Common::Singleton<Input::GameControllers>::Instance())[0]->ApplyRemoteState(
-            sent_buttons, sent_axes, false, sent_touch_x, sent_touch_y);
-        Runtime::Instance().ReleasePad();
+        auto* const controller = (*Common::Singleton<Input::GameControllers>::Instance())[0];
+        if (controller->ApplyRemoteState(sent_buttons, sent_axes, false, sent_touch_x, sent_touch_y)) {
+            controller->ApplyRemotePose(nullptr);
+        }
         LOG_INFO(Core_Vr, "The headset's controllers no longer stand in for the gamepad: {}",
                  why);
     }
@@ -942,7 +943,7 @@ struct OpenXrHost::Impl {
             return;
         }
         auto* const controller = (*Common::Singleton<Input::GameControllers>::Instance())[0];
-        if (controller->m_sdl_gamepad != nullptr) {
+        if (controller->HasPhysicalController()) {
             ReleaseControllers("a gamepad is connected to the PC");
             ApplyRumble(false);
             return;
@@ -1064,8 +1065,11 @@ struct OpenXrHost::Impl {
                 sent_touch_x = touch_x;
                 sent_touch_y = touch_y;
             }
-            // (A finger that lifts does so from where it was.)
-            controller->ApplyRemoteState(buttons, axes, touch, sent_touch_x, sent_touch_y);
+        }
+        if (!controller->ApplyRemoteState(buttons, axes, touch, sent_touch_x, sent_touch_y)) {
+            ReleaseControllers("a gamepad is connected to the PC");
+            ApplyRumble(false);
+            return;
         }
 
         XrSpaceVelocity velocity{XR_TYPE_SPACE_VELOCITY};
@@ -1097,12 +1101,12 @@ struct OpenXrHost::Impl {
                                           velocity.angularVelocity.z};
             }
             state.tracked = true;
-            Runtime::Instance().UpdatePad(state);
+            controller->ApplyRemotePose(&state);
             controller_pose = location.pose;
             ++controller_samples;
         } else if (controller_tracked) {
             // Out of the headset's sight: it is where a gamepad would be assumed to be.
-            Runtime::Instance().ReleasePad();
+            controller->ApplyRemotePose(nullptr);
         }
         controller_tracked = located;
         ApplyRumble(true);
@@ -2229,7 +2233,7 @@ struct OpenXrHost::Impl {
         if (!motion_warned && was_focused && now - session_started > std::chrono::seconds{20}) {
             const auto* const gamepad =
                 (*Common::Singleton<Input::GameControllers>::Instance())[0];
-            if (gamepad->m_sdl_gamepad != nullptr && !Runtime::Instance().PadMotionKnown()) {
+            if (gamepad->HasPhysicalController() && !Runtime::Instance().PadMotionKnown()) {
                 motion_warned = true;
                 LOG_WARNING(Core_Vr,
                             "The gamepad has said nothing of how it is held (no motion sensor "

@@ -99,6 +99,7 @@ void State::UpdateAxisSmoothing() {
 GameController::GameController() : m_states_queue(64) {}
 
 void GameController::ReadState(State* state, bool* isConnected, int* connectedCount) {
+    std::lock_guard lock(m_states_queue_mutex);
     *isConnected = m_connected;
     *connectedCount = m_connected_count;
     *state = m_state;
@@ -106,12 +107,12 @@ void GameController::ReadState(State* state, bool* isConnected, int* connectedCo
 
 int GameController::ReadStates(State* states, int states_num, bool* isConnected,
                                int* connectedCount) {
+    std::lock_guard lock(m_states_queue_mutex);
     *isConnected = m_connected;
     *connectedCount = m_connected_count;
 
     int ret_num = 0;
     if (m_connected) {
-        std::lock_guard lg(m_states_queue_mutex);
         for (int i = 0; i < states_num; i++) {
             auto o_state = m_states_queue.Pop();
             if (!o_state) {
@@ -144,6 +145,7 @@ static void NoteViewButtons(OrbisPadButtonDataOffset before, OrbisPadButtonDataO
 }
 
 void GameController::Button(OrbisPadButtonDataOffset button, bool is_pressed) {
+    std::lock_guard lock(m_states_queue_mutex);
     const auto before = m_state.buttonsState;
     m_state.OnButton(button, is_pressed);
     PushState();
@@ -153,33 +155,54 @@ void GameController::Button(OrbisPadButtonDataOffset button, bool is_pressed) {
 }
 
 void GameController::Axis(Input::Axis axis, int value, bool smooth) {
+    std::lock_guard lock(m_states_queue_mutex);
     m_state.OnAxis(axis, value, smooth);
     PushState();
 }
 
-void GameController::ApplyRemoteState(OrbisPadButtonDataOffset buttons,
-                                      const std::array<int, 6>& axes, bool touch_down,
-                                      float touch_x, float touch_y) {
-    OrbisPadButtonDataOffset before;
-    {
-        std::lock_guard lock(m_states_queue_mutex);
-        before = m_state.buttonsState;
-        m_connected = true;
-        m_connected_count = 1;
-        m_state.buttonsState = buttons;
-        for (int i = 0; i < std::to_underlying(Axis::AxisMax); ++i) {
-            m_state.OnAxis(static_cast<Input::Axis>(i), axes[i], false);
-        }
-        m_state.OnTouchpad(0, touch_down, touch_x, touch_y);
-        m_state.time = Libraries::Kernel::sceKernelGetProcessTime();
-        m_states_queue.Push(m_state);
+bool GameController::ApplyRemoteState(OrbisPadButtonDataOffset buttons,
+                                      const std::array<int, 6>& axes, bool touch_down, float touch_x,
+                                      float touch_y) {
+    std::lock_guard lock(m_states_queue_mutex);
+    if (m_sdl_gamepad != nullptr) {
+        return false;
     }
+    const auto before = m_state.buttonsState;
+    if (m_connected && before == buttons && m_state.axes == axes &&
+        m_state.touchpad[0].state == touch_down &&
+        (!touch_down || (m_state.touchpad[0].x == static_cast<u16>(touch_x * 1920) &&
+                         m_state.touchpad[0].y == static_cast<u16>(touch_y * 941)))) {
+        return true;
+    }
+    m_connected = true;
+    m_connected_count = 1;
+    m_state.buttonsState = buttons;
+    for (int i = 0; i < std::to_underlying(Axis::AxisMax); ++i) {
+        m_state.OnAxis(static_cast<Input::Axis>(i), axes[i], false);
+    }
+    m_state.UpdateAxisSmoothing();
+    m_state.OnTouchpad(0, touch_down, touch_x, touch_y);
+    PushState();
     if (IsFirstController(this)) {
         NoteViewButtons(before, buttons);
+    }
+    return true;
+}
+
+void GameController::ApplyRemotePose(const Core::Vr::DeviceState* state) {
+    std::lock_guard lock(m_states_queue_mutex);
+    if (m_sdl_gamepad != nullptr) {
+        return;
+    }
+    if (state != nullptr) {
+        Core::Vr::Runtime::Instance().UpdatePad(*state);
+    } else {
+        Core::Vr::Runtime::Instance().ReleasePad();
     }
 }
 
 void GameController::Gyro(int id) {
+    std::lock_guard lock(m_states_queue_mutex);
     m_state.OnGyro(gyro_buf);
     PushState();
     // This is called every few milliseconds for every controller, whatever it has to say.
@@ -223,6 +246,7 @@ void GameController::UpdateStickTouch() {
 }
 
 void GameController::Acceleration(int id) {
+    std::lock_guard lock(m_states_queue_mutex);
     m_state.OnAccel(accel_buf);
     PushState();
 }
@@ -238,10 +262,12 @@ void GameController::UpdateAcceleration(const float acceleration[3]) {
 }
 
 void GameController::UpdateAxisSmoothing() {
+    std::lock_guard lock(m_states_queue_mutex);
     m_state.UpdateAxisSmoothing();
 }
 
 void GameController::SetLightBarRGB(u8 const r, u8 const g, u8 const b) {
+    std::lock_guard lock(m_states_queue_mutex);
     if (override_colour.has_value()) {
         return;
     }
@@ -259,10 +285,12 @@ void GameController::SetLightBarRGB(Colour const c) {
 }
 
 Colour GameController::GetLightBarRGB() {
+    std::lock_guard lock(m_states_queue_mutex);
     return colour;
 }
 
 void GameController::PollLightColour() {
+    std::lock_guard lock(m_states_queue_mutex);
     if (m_sdl_gamepad != nullptr) {
         SDL_SetGamepadLED(m_sdl_gamepad, colour.r, colour.g, colour.b);
     }
@@ -285,6 +313,7 @@ void GameControllers::ResetLightbarColors() {
 }
 
 bool GameController::SetVibration(u8 smallMotor, u8 largeMotor) {
+    std::lock_guard lock(m_states_queue_mutex);
     if (IsFirstController(this)) {
         Core::Vr::Runtime::Instance().SetPadVibration(smallMotor, largeMotor);
     }
@@ -296,6 +325,10 @@ bool GameController::SetVibration(u8 smallMotor, u8 largeMotor) {
 }
 
 void GameController::SetTouchpadState(int touchIndex, bool touchDown, float x, float y) {
+    if (touchIndex < 0 || touchIndex >= 2) {
+        return;
+    }
+    std::lock_guard lock(m_states_queue_mutex);
     // A finger on the real touchpad: the right stick stops standing in for one.
     if (touchIndex == 0) {
         m_finger_down = touchDown;
@@ -358,15 +391,52 @@ void GameControllers::CalculateOrientation(Libraries::Pad::OrbisFVector3& accele
               orientation.y, orientation.z, orientation.w);
 }
 
+void GameController::ResetForDeviceHandover() {
+    const auto before = m_state.buttonsState;
+    m_state = State{};
+    while (m_states_queue.Pop()) {}
+    std::fill(std::begin(gyro_buf), std::end(gyro_buf), 0.0f);
+    std::fill(std::begin(accel_buf), std::end(accel_buf), 0.0f);
+    accel_buf[1] = 9.81f;
+    gyro_poll_rate = 0.0f;
+    accel_poll_rate = 0.0f;
+    m_orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_last_update = {};
+    m_finger_down = false;
+    m_stick_touch = false;
+    m_stick_touch_x = 0.5f;
+    m_stick_touch_y = 0.5f;
+    last_touch_down_timestamp = 0;
+    m_touch_count = 0;
+    m_secondary_touch_count = 0;
+    m_previous_touchnum = 0;
+    m_was_secondary_reset = false;
+    if (IsFirstController(this)) {
+        NoteViewButtons(before, OrbisPadButtonDataOffset::None);
+        Core::Vr::Runtime::Instance().ResetPadMotion();
+    }
+}
+
 void GameController::ConnectController(SDL_Gamepad* pad) {
+    std::lock_guard lock(m_states_queue_mutex);
+    if (pad != m_sdl_gamepad) {
+        ResetForDeviceHandover();
+    }
     m_sdl_gamepad = pad;
     m_connected_count = 1;
     m_connected = true;
 }
 void GameController::DisconnectController() {
+    std::lock_guard lock(m_states_queue_mutex);
+    ResetForDeviceHandover();
     m_sdl_gamepad = nullptr;
     m_connected_count = 0;
     m_connected = false;
+}
+
+bool GameController::HasPhysicalController() const {
+    std::lock_guard lock(m_states_queue_mutex);
+    return m_sdl_gamepad != nullptr;
 }
 
 bool is_first_check = true;
@@ -380,6 +450,23 @@ void GameControllers::TryOpenSDLControllers() {
 
     std::unordered_set<SDL_JoystickID> assigned_ids;
     std::array<bool, 4> slot_taken{false, false, false, false};
+    std::array<bool, 4> slots_changed{};
+    const bool vr_connected = Core::Vr::Runtime::Instance().IsHeadsetConnected();
+    if (const char* script = std::getenv("SHADPS4_INPUT_SCRIPT"); script != nullptr && *script != '\0') {
+        controller_count = 0;
+    }
+    if (vr_connected && controller_count > 0) {
+        const auto end = std::remove_if(
+            new_joysticks, new_joysticks + controller_count, [](SDL_JoystickID id) {
+                const bool sense = IsPsvr2SenseGamepad(SDL_GetGamepadVendorForID(id),
+                                                     SDL_GetGamepadProductForID(id));
+                if (sense) {
+                    LOG_INFO(Input, "Sense controller {} is reserved for the VR input source", id);
+                }
+                return sense;
+            });
+        controller_count = static_cast<int>(end - new_joysticks);
+    }
 
     // The first player gets the best of what is there: a DualSense before other PlayStation
     // controllers (among which is the copy of a gamepad paired with a headset that Virtual
@@ -412,11 +499,9 @@ void GameControllers::TryOpenSDLControllers() {
                 }
             }
             if (!still_connected) {
-                ClearGamepadInputs(i + 1);
-                controllers[i]->ApplyRemoteState(OrbisPadButtonDataOffset::None,
-                                                {128, 128, 128, 128, 0, 0}, false, 0.5f, 0.5f);
-                SDL_CloseGamepad(pad);
                 controllers[i]->DisconnectController();
+                SDL_CloseGamepad(pad);
+                slots_changed[i] = true;
                 controllers[i]->user_id = -1;
                 slot_taken[i] = false;
             }
@@ -432,8 +517,7 @@ void GameControllers::TryOpenSDLControllers() {
         const char* value = std::getenv("SHADPS4_VR_ONE_PLAYER");
         return value == nullptr || value[0] != '0';
     }();
-    const bool one_player =
-        one_player_wanted && Core::Vr::Runtime::Instance().IsHeadsetConnected();
+    const bool one_player = one_player_wanted && vr_connected;
     static std::unordered_set<SDL_JoystickID> left_unused;
     for (int j = 0; j < controller_count; j++) {
         SDL_JoystickID id = new_joysticks[j];
@@ -472,6 +556,7 @@ void GameControllers::TryOpenSDLControllers() {
                 c->user_id = u->user_id;
                 UserManagement.LoginUser(u, i + 1);
                 c->ConnectController(pad);
+                slots_changed[i] = true;
                 {
                     const char* name = SDL_GetGamepadName(pad);
                     const char* path = SDL_GetGamepadPath(pad);
@@ -519,21 +604,30 @@ void GameControllers::TryOpenSDLControllers() {
             UserManagement.LoginUser(u, 1);
         }
     }
+    for (u8 i = 0; i < slots_changed.size(); ++i) {
+        if (slots_changed[i]) {
+            ClearGamepadInputs(i + 1);
+        }
+    }
     SDL_free(new_joysticks);
 }
 u8 GameController::GetTouchCount() {
+    std::lock_guard lock(m_states_queue_mutex);
     return m_touch_count;
 }
 
 void GameController::SetTouchCount(u8 touchCount) {
+    std::lock_guard lock(m_states_queue_mutex);
     m_touch_count = touchCount;
 }
 
 u8 GameController::GetSecondaryTouchCount() {
+    std::lock_guard lock(m_states_queue_mutex);
     return m_secondary_touch_count;
 }
 
 void GameController::SetSecondaryTouchCount(u8 touchCount) {
+    std::lock_guard lock(m_states_queue_mutex);
     m_secondary_touch_count = touchCount;
     if (touchCount == 0) {
         m_was_secondary_reset = true;
@@ -541,39 +635,46 @@ void GameController::SetSecondaryTouchCount(u8 touchCount) {
 }
 
 u8 GameController::GetPreviousTouchNum() {
+    std::lock_guard lock(m_states_queue_mutex);
     return m_previous_touchnum;
 }
 
 void GameController::SetPreviousTouchNum(u8 touchNum) {
+    std::lock_guard lock(m_states_queue_mutex);
     m_previous_touchnum = touchNum;
 }
 
 bool GameController::WasSecondaryTouchReset() {
+    std::lock_guard lock(m_states_queue_mutex);
     return m_was_secondary_reset;
 }
 
 void GameController::UnsetSecondaryTouchResetBool() {
+    std::lock_guard lock(m_states_queue_mutex);
     m_was_secondary_reset = false;
 }
 
 void GameController::SetLastOrientation(Libraries::Pad::OrbisFQuaternion& orientation) {
+    std::lock_guard lock(m_states_queue_mutex);
     m_orientation = orientation;
 }
 
 Libraries::Pad::OrbisFQuaternion GameController::GetLastOrientation() {
+    std::lock_guard lock(m_states_queue_mutex);
     return m_orientation;
 }
 
 std::chrono::steady_clock::time_point GameController::GetLastUpdate() {
+    std::lock_guard lock(m_states_queue_mutex);
     return m_last_update;
 }
 
 void GameController::SetLastUpdate(std::chrono::steady_clock::time_point lastUpdate) {
+    std::lock_guard lock(m_states_queue_mutex);
     m_last_update = lastUpdate;
 }
 
 void GameController::PushState() {
-    std::lock_guard lg(m_states_queue_mutex);
     m_state.time = Libraries::Kernel::sceKernelGetProcessTime();
     m_states_queue.Push(m_state);
 }
