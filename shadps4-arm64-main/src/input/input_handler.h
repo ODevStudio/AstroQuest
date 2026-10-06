@@ -605,6 +605,8 @@ public:
 // Returns whether the list was updated or not.
 bool UpdatePressedKeys(InputEvent event);
 
+void ClearGamepadInputs(u8 gamepad_id);
+
 void ActivateOutputsFromInputs();
 
 } // namespace Input

@@ -180,6 +180,7 @@ public:
     /// The host that said where the controller is and how it is turned (UpdatePad) no longer
     /// does: it is placed by what else is known of it again.
     void ReleasePad();
+    void ResetPadMotion();
     /// For hosts that only know how the controller is turned (from its motion sensors) and not
     /// where it is. The runtime then places it with Config::pad_offset.
     void UpdatePadOrientation(const Quat& orientation, const Vec3& angular_velocity);

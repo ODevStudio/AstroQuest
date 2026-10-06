@@ -41,6 +41,26 @@ The saved headset FOV is reused only when the OpenXR runtime (including its vers
 name and vendor match. With no confirmed headset identity or matching cache, the title uses
 the PSVR default until the next game start; legacy caches without an identity are ignored.
 
+## PSVR2 Sense controllers through SteamVR
+
+Set up the **PlayStation VR2 App**, PC adapter and Sense controllers, then start SteamVR.
+Select **Set SteamVR as OpenXR Runtime** in SteamVR's OpenXR settings. Use the same PC build
+and **Play Astro Bot VR.bat**; no Virtual Desktop is needed.
+
+With no PC gamepad connected, the Sense controllers supply buttons, tracking and rumble.
+The face buttons retain their PlayStation symbols: right cross/circle and left square/triangle.
+The left stick moves, L1/R1 are the grips, L2/R2 are the triggers, and right OPTIONS opens
+the menu. The right stick moves a finger on the emulated touchpad; press it to click the
+touchpad. Press both sticks to recenter, or hold OPTIONS for a second. The right controller
+places and rotates the gamepad in the game, as with the other VR-controller fallbacks.
+SteamVR exposes Sense through its Touch compatibility profile. The emulator selects the
+Sense button layout when SteamVR identifies the headset as PlayStation VR2.
+
+A DualSense or DualSense Edge connected to the PC takes primary control, including when
+you connect it after another gamepad. Disconnect it to return to the VR controllers when
+no other PC gamepad is connected. Disable Steam Input for any Steam shortcut to preserve
+the DualSense's sensors and touchpad. Physical PSVR2 gameplay testing is still pending.
+
 ## Quest through Virtual Desktop
 
 The second way to play (the first, the app that runs on the headset itself, is in
@@ -523,7 +543,7 @@ Run the launcher checks with:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/tests/launcher-test.ps1
 ```
 
-To check OpenXR projection conversion, headset FOV caching, and desktop composition, run these
+To check OpenXR projections, headset FOV caching, desktop composition and controller mappings, run these
 commands from the repository root in a developer shell with `clang-cl` and the Windows SDK
 available (the `build` directory must exist):
 
@@ -534,7 +554,22 @@ clang-cl /std:c++latest /EHsc /Ishadps4-arm64-main/src /Ishadps4-arm64-main/exte
 ./build/headset_fov_cache_test.exe
 clang-cl /std:c++latest /EHsc /Ishadps4-arm64-main/src tools/tests/spectator_view_test.cpp /Fobuild/spectator_view_test.obj /Febuild/spectator_view_test.exe
 ./build/spectator_view_test.exe
+clang-cl /std:c++latest /EHsc /Ishadps4-arm64-main/src tools/tests/controller_support_test.cpp /Fobuild/controller_support_test.obj /Febuild/controller_support_test.exe
+./build/controller_support_test.exe
 ```
+
+After building `build/win-x64`, run the controller handover checks from the same developer
+shell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/tests/controller-handover-test.ps1
+```
+
+These use SDL virtual gamepads with physical device drivers disabled. They cover remote
+input, Sense-half exclusion in VR, DualSense/Edge promotion, late remote cleanup, complete
+touch/motion/queue reset, unused-device events, held keyboard input and fallback. Separate
+runs check that flat-mode selection and scripted-input priority remain intact. Actual
+Windows Sense enumeration, headset tracking and haptics still need hardware validation.
 
 Virtual Desktop's runtime has no headset to offer unless one is connected, so the OpenXR path
 is tested against the **Meta XR Simulator** (installed on this PC), which is a full OpenXR

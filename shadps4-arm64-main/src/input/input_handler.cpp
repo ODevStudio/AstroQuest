@@ -857,8 +857,23 @@ void ControllerOutput::FinalizeUpdate(u8 gamepad_index) {
     }
 }
 
-// Updates the list of pressed keys with the given input.
-// Returns whether the list was updated or not.
+void ClearGamepadInputs(u8 gamepad_id) {
+    const auto from_gamepad = [gamepad_id](const InputID& input) {
+        return input.gamepad_id == gamepad_id &&
+               (input.type == InputType::Controller || input.type == InputType::Axis);
+    };
+    pressed_keys.remove_if([&](const auto& entry) { return from_gamepad(entry.first.input); });
+    toggled_keys.remove_if(from_gamepad);
+    for (auto& output : output_arrays[gamepad_id - 1].data) {
+        if (output.button <= SDL_GAMEPAD_BUTTON_TOUCHPAD_RIGHT ||
+            output.axis != SDL_GAMEPAD_AXIS_INVALID) {
+            output.old_button_state = false;
+            output.old_param = 0;
+        }
+    }
+    ActivateOutputsFromInputs();
+}
+
 bool UpdatePressedKeys(InputEvent event) {
     // Skip invalid inputs
     InputID input = event.input;
