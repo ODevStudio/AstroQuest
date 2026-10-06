@@ -34,6 +34,7 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include "core/vr/openxr_controller_profiles.h"
 #include "core/vr/openxr_view.h"
 
 namespace Core::Vr {
@@ -347,6 +348,7 @@ struct OpenXrHost::Impl {
 
     // The headset's own controllers, which stand in for a gamepad where the PC has none.
     bool use_controllers{true};
+    bool sense_controllers{};
     int pad_hand{1};
     XrVector3f pad_offset{};
     XrActionSet action_set{XR_NULL_HANDLE};
@@ -527,6 +529,10 @@ struct OpenXrHost::Impl {
         }
         Runtime::Instance().SetHeadsetIdentity(
             {runtime_name, properties.systemName, properties.vendorId});
+        sense_controllers = IsPsvr2Headset(properties.systemName);
+        if (sense_controllers) {
+            LOG_INFO(Core_Vr, "PSVR2 Sense controllers use SteamVR's Touch-compatible profile");
+        }
         fov_samples = 0;
         max_swapchain_width = properties.graphicsProperties.maxSwapchainImageWidth;
         max_swapchain_height = properties.graphicsProperties.maxSwapchainImageHeight;
@@ -781,13 +787,6 @@ struct OpenXrHost::Impl {
         }
     }
 
-    /// The headset's own controllers as the title's gamepad, for a player who has none on the
-    /// PC. The left stick is the left stick; the right one is the finger on the touchpad (as
-    /// it is for gamepads without one) and pressing it in presses the touchpad; A and B, under
-    /// the right thumb, are ✕ and □, which is what a hand is on all the time, X and Y are ○
-    /// and △; the triggers are L2 and R2, the grips L1 and R1, the left controller's menu
-    /// button is OPTIONS. Where one of them is and how it points (the right one, unless
-    /// SHADPS4_XR_PAD_HAND=left) is where the controller in the game is.
     void CreateActions() {
         actions_ready = false;
         XrActionSetCreateInfo set_info{XR_TYPE_ACTION_SET_CREATE_INFO};
@@ -835,7 +834,7 @@ struct OpenXrHost::Impl {
             return;
         }
 
-        for (const bool index : {false, true}) {
+        for (const auto& profile : OpenXrControllerProfiles(sense_controllers)) {
             std::vector<XrActionSuggestedBinding> bindings;
             const auto bind = [&](XrAction action, const char* path) {
                 XrPath binding = XR_NULL_PATH;
@@ -847,17 +846,14 @@ struct OpenXrHost::Impl {
             bind(act_finger, "/user/hand/right/input/thumbstick");
             bind(act_finger_press, "/user/hand/right/input/thumbstick/click");
             bind(act_cross, "/user/hand/right/input/a/click");
-            bind(act_square, "/user/hand/right/input/b/click");
-            bind(act_circle,
-                 index ? "/user/hand/left/input/a/click" : "/user/hand/left/input/x/click");
-            bind(act_triangle,
-                 index ? "/user/hand/left/input/b/click" : "/user/hand/left/input/y/click");
+            bind(act_square, profile.square);
+            bind(act_circle, profile.circle);
+            bind(act_triangle, profile.triangle);
             bind(act_l1, "/user/hand/left/input/squeeze/value");
             bind(act_r1, "/user/hand/right/input/squeeze/value");
             bind(act_l2, "/user/hand/left/input/trigger/value");
             bind(act_r2, "/user/hand/right/input/trigger/value");
-            bind(act_options, index ? "/user/hand/left/input/trackpad/force"
-                                    : "/user/hand/left/input/menu/click");
+            bind(act_options, profile.options);
             bind(act_l3, "/user/hand/left/input/thumbstick/click");
             bind(act_pose, pad_hand == 0 ? "/user/hand/left/input/aim/pose"
                                          : "/user/hand/right/input/aim/pose");
@@ -867,16 +863,15 @@ struct OpenXrHost::Impl {
             bind(act_rumble, "/user/hand/right/output/haptic");
             XrInteractionProfileSuggestedBinding suggested{
                 XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
-            xrStringToPath(instance,
-                           index ? "/interaction_profiles/valve/index_controller"
-                                 : "/interaction_profiles/oculus/touch_controller",
-                           &suggested.interactionProfile);
+            if (XR_FAILED(xrStringToPath(instance, profile.path, &suggested.interactionProfile))) {
+                continue;
+            }
             suggested.countSuggestedBindings = static_cast<uint32_t>(bindings.size());
             suggested.suggestedBindings = bindings.data();
             if (const XrResult result = xrSuggestInteractionProfileBindings(instance, &suggested);
                 XR_FAILED(result)) {
                 LOG_WARNING(Core_Vr, "The headset's runtime takes no {} controller bindings: {}",
-                            index ? "Index" : "Touch", ResultText(instance, result));
+                            profile.name, ResultText(instance, result));
             }
         }
 
@@ -1016,10 +1011,9 @@ struct OpenXrHost::Impl {
             controllers_used = true;
             LOG_INFO(Core_Vr,
                      "No gamepad is connected to the PC: the headset's controllers stand in for "
-                     "it (left stick to move, right A = cross, right B = square, left X/A = "
-                     "circle, left Y/B = triangle, right stick = finger on the touchpad, "
-                     "pressed in = touchpad pressed, left menu/trackpad = OPTIONS, "
-                     "both sticks pressed in = reset the view; the {} "
+                     "it (left stick to move, right stick = finger on the touchpad, "
+                     "pressed in = touchpad pressed, both sticks pressed in = reset the view; "
+                     "the {} "
                      "one is the controller in the game)",
                      pad_hand == 0 ? "left" : "right");
         }

@@ -19,6 +19,8 @@
 #include "core/libraries/system/userservice.h"
 #include "core/user_settings.h"
 #include "input/controller.h"
+#include "input/controller_priority.h"
+#include "input/input_handler.h"
 
 namespace Input {
 
@@ -371,7 +373,7 @@ bool is_first_check = true;
 
 void GameControllers::TryOpenSDLControllers() {
     using namespace Libraries::UserService;
-    int controller_count;
+    int controller_count = 0;
     s32 move_count = 0;
     SDL_JoystickID* new_joysticks = SDL_GetGamepads(&controller_count);
     LOG_INFO(Input, "{} controllers are currently connected", controller_count);
@@ -384,15 +386,15 @@ void GameControllers::TryOpenSDLControllers() {
     // Desktop puts on the PC, a DualShock 4 without motion sensors or touchpad), those before
     // anything else.
     const auto rank = [](SDL_JoystickID id) {
-        const u16 vendor = SDL_GetGamepadVendorForID(id);
-        const u16 product = SDL_GetGamepadProductForID(id);
-        if (vendor == 0x054c && (product == 0x0ce6 || product == 0x0df2)) {
-            return 0;
-        }
-        return vendor == 0x054c ? 1 : 2;
+        return GamepadPriority(SDL_GetGamepadVendorForID(id), SDL_GetGamepadProductForID(id));
     };
-    std::stable_sort(new_joysticks, new_joysticks + controller_count,
-                     [&](SDL_JoystickID a, SDL_JoystickID b) { return rank(a) < rank(b); });
+    if (controller_count > 1) {
+        std::stable_sort(new_joysticks, new_joysticks + controller_count,
+                         [&](SDL_JoystickID a, SDL_JoystickID b) { return rank(a) < rank(b); });
+    }
+    auto* const primary = controllers[0]->m_sdl_gamepad;
+    const bool promote_ps5 = controller_count > 0 && rank(new_joysticks[0]) == 0 &&
+                             (primary == nullptr || rank(SDL_GetGamepadID(primary)) > 0);
 
     for (int i = 0; i < 4; i++) {
         SDL_Gamepad* pad = controllers[i]->m_sdl_gamepad;
@@ -401,7 +403,8 @@ void GameControllers::TryOpenSDLControllers() {
             bool still_connected = false;
             ControllerType type = ControllerType::Standard;
             for (int j = 0; j < controller_count; j++) {
-                if (new_joysticks[j] == id) {
+                if (new_joysticks[j] == id &&
+                    !(promote_ps5 && (i == 0 || id == new_joysticks[0]))) {
                     still_connected = true;
                     assigned_ids.insert(id);
                     slot_taken[i] = true;
@@ -409,7 +412,9 @@ void GameControllers::TryOpenSDLControllers() {
                 }
             }
             if (!still_connected) {
-                auto u = UserManagement.GetUserByID(controllers[i]->user_id);
+                ClearGamepadInputs(i + 1);
+                controllers[i]->ApplyRemoteState(OrbisPadButtonDataOffset::None,
+                                                {128, 128, 128, 128, 0, 0}, false, 0.5f, 0.5f);
                 SDL_CloseGamepad(pad);
                 controllers[i]->DisconnectController();
                 controllers[i]->user_id = -1;
@@ -575,7 +580,9 @@ void GameController::PushState() {
 
 u8 GameControllers::GetGamepadIndexFromJoystickId(SDL_JoystickID id) {
     auto g = SDL_GetGamepadFromID(id);
-    ASSERT(g != nullptr);
+    if (g == nullptr) {
+        return -1;
+    }
     for (int i = 0; i < 5; i++) {
         if (controllers[i]->m_sdl_gamepad == g) {
             return i;
